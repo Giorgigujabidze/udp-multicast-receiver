@@ -155,7 +155,7 @@ StreamInfo parseRtpUrl(const std::string &url) {
 
 void signal_handler(const int signum) {
     std::cout << "\nReceived signal " << signum << ", exiting ..." << std::endl;
-    exit(signum);
+    exit(0);
 }
 
 int main(int argc, const char *argv[]) {
