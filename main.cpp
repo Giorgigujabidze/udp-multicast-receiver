@@ -9,7 +9,10 @@
 #include <unistd.h>
 #include <csignal>
 #include <atomic>
+#include <thread>
 #include <nlohmann/json.hpp>
+
+std::atomic stopFlag(false);
 
 struct Stream {
     std::string name;
@@ -29,7 +32,6 @@ struct StreamInfo {
 
 struct MulticastStream {
     StreamInfo info;
-    std::atomic<bool> running{true};
     int sock{-1};
 };
 
@@ -116,10 +118,22 @@ void *recvThread(void *arg) {
 
     socklen_t addrLen = sizeof(address);
 
-    while (stream->running) {
+    std::vector<double> results;
+    results.reserve(100000);
+
+    while (!stopFlag.load()) {
+        auto cycleStart = std::chrono::high_resolution_clock::now();
         char buffer[65535];
         const ssize_t received = recvfrom(stream->sock, buffer, sizeof(buffer), 0,
                                           reinterpret_cast<sockaddr *>(&address), &addrLen);
+        double value = 0.0;
+        for (int i = 0; i < 50000; i++) {
+            value += std::sin(i) * std::cos(i) / (std::tan(i + 0.1) + 1.0);
+            results.push_back(value);
+            if (results.size() > 100000) {
+                results.clear();
+            }
+        }
 
         if (received < 0) {
             if (errno == EAGAIN || errno == EWOULDBLOCK) {
@@ -128,8 +142,14 @@ void *recvThread(void *arg) {
             perror("recvfrom failed");
             break;
         }
-        // std::cout << "** " << received << " from: " << stream->info.ip << " **" << std::endl;
+        auto cycleEnd = std::chrono::high_resolution_clock::now();
+        auto busyTime = cycleEnd - cycleStart;
+
+
+        auto sleepDuration = busyTime * ( (1.0 / 0.6) - 1.0 );
+        std::this_thread::sleep_for(sleepDuration * 20);
     }
+
 
     cleanup_socket(stream);
     return nullptr;
@@ -155,11 +175,14 @@ StreamInfo parseRtpUrl(const std::string &url) {
 
 void signal_handler(const int signum) {
     std::cout << "\nReceived signal " << signum << ", exiting ..." << std::endl;
-    exit(0);
+    stopFlag.store(true);
 }
 
 int main(int argc, const char *argv[]) {
     signal(SIGINT, signal_handler);
+    signal(SIGTERM, signal_handler);
+    signal(SIGKILL, signal_handler);
+
 
     auto streams = Streams{};
     int n = 0;
@@ -213,7 +236,6 @@ int main(int argc, const char *argv[]) {
 
 
     for (auto *stream: multicastStreams) {
-        stream->running = false;
         delete stream;
     }
 
